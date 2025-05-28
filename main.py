@@ -1,10 +1,11 @@
 import asyncio
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from config import (
     MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD,
     MQTT_CLIMATE_STATE, MQTT_DYNALITE_PREFIX, MQTT_BRIDGE_WILL,
-    OUT_JOIN, IN_JOIN, TEMP_PRECISION, MQTT_CLIMATE_PREFIX, MQTT_DEBUG
+    OUT_JOIN, IN_JOIN, TEMP_PRECISION, MQTT_CLIMATE_PREFIX, MQTT_DEBUG,MQTT_CLIMATE_WILL,MQTT_DYNALITE_WILL
 )
 from helpers.dynet_mqtt import (
     build_area_temperature_body, build_area_preset_body,
@@ -14,6 +15,8 @@ from mqtt.publisher import MQTTPublisher
 
 mqtt_client = None  # Global instance
 last_state = {}     # State cache per area
+pending_responses = {} #Response tracker
+bridge_online = {"dynalite": False,"climate": False} #Track bridge status
 
 # Logger
 def log(msg: str):
@@ -24,14 +27,41 @@ def handle_mqtt_connect(client, userdata, flags, rc):
     if rc == 0:
         #log("✅ Connected to MQTT broker.")
         try:
+            #first sub to the will status of the dependant bridges
+            client.subscribe(f"{MQTT_DYNALITE_WILL}")
+            log(f"📡 Subscribed to {MQTT_DYNALITE_WILL}")
+            client.subscribe(f"{MQTT_CLIMATE_WILL}")
+            log(f"📡 Subscribed to {MQTT_CLIMATE_WILL}")
+            #Subscribe to rest of the required topics for this integration
             client.subscribe(MQTT_CLIMATE_STATE)
             log(f"📡 Subscribed to {MQTT_CLIMATE_STATE}")
             client.subscribe(MQTT_DYNALITE_PREFIX)
             log(f"📡 Subscribed to {MQTT_DYNALITE_PREFIX}")
+            #do not sub to /set, as the bridge handles this
+            #only sub to /set/res as this where the responses from 
+            #the bridge will turn up
+            client.subscribe(f"{MQTT_DYNALITE_PREFIX}/set/res/#")
+            log(f"📡 Subscribed to {MQTT_DYNALITE_PREFIX}/set/res/#")
         except Exception as e:
             log(f"❌ Failed to subscribe: {e}")
     else:
         log(f"❌ Connection failed with code {rc}")
+
+def _pub2dynet(type, hex_string, comment=""):
+    response_id = uuid.uuid4().hex
+    payload = {
+        "type": type,
+        "hex_string": hex_string,
+        "response_id": response_id
+    }
+    
+    mqtt_client.publish(f"{MQTT_DYNALITE_PREFIX}/set", json.dumps(payload))
+    pending_responses[response_id] = {
+        "comment": comment,
+        "sent_at": datetime.now(timezone.utc)
+    }
+
+    #log(f"📤 Sent Dynalite command → Area: {area_code}, Channel: {channel}, ID: {response_id}{' — ' + comment if comment else ''}")
 
 
 def handle_climate_message(topic: str, state):
@@ -89,63 +119,69 @@ def handle_climate_message(topic: str, state):
         # Compare and publish only if changed
 
         if new_state["setpoint"] != prev_state.get("setpoint"):
-            log("📡 Setpoint changed")
+            log(f"📡 Setpoint changed from {prev_state.get("setpoint")} -> {new_state["setpoint"]}")
             try:
                 setpoint_hex = build_area_setpoint_body(area=area_code, join=OUT_JOIN, setpoint=setpoint)
-                log(f"📤 Dynalite Setpoint Hex → {setpoint_hex}")
-                mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": setpoint_hex})
+                log(f"📤 Sending Dynalite Packet [Set_Point] → {setpoint_hex}")
+                _pub2dynet(type="dynet2",hex_string=setpoint_hex)
+                #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": setpoint_hex})
             except Exception as e:
                 log(f"❌ Failed to publish setpoint: {e}")
 
-        if new_state["current_temp"] != prev_state.get("current_temp"):
-            log("📡 Current Temp changed")
+        if new_state["current_temp"] != prev_state.get("current_Temp"):
+            log(f"📡 Current Temp changed from {prev_state.get("current_temp")} -> {new_state["current_temp"]}")            
             try:
                 temp_hex = build_area_temperature_body(area=area_code, join=OUT_JOIN, temp=current_temp)
-                log(f"📤 Dynalite Temp Hex → {temp_hex}")
-                mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": temp_hex})
+                log(f"📤 Sending Dynalite Packet [Cur_Temp] → {temp_hex}")
+                _pub2dynet(type="dynet2",hex_string=temp_hex)
+                #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": temp_hex})
             except Exception as e:
                 log(f"❌ Failed to publish temperature: {e}")
 
         if new_state["hvac_mode"] != prev_state.get("hvac_mode"):
-            log("📡 HVAC Mode changed")
+            log(f"📡 HVAC Mode changed from {prev_state.get("hvac_mode")} -> {new_state["hvac_mode"]}")            
             try:
                 on_off = 0 if hvac_mode.lower() == "off" else 1
                 onoff_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=101, level=on_off)
-                log(f"📤 Dynalite On/Off Hex → {onoff_hex}")
-                mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": onoff_hex})
+                log(f"📤 Sending Dynalite Packet [On/Off] → {onoff_hex}")
+                _pub2dynet(type="dynet2",hex_string=onoff_hex)
+                #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": onoff_hex})
 
                 hvac_map = {"cool": 0, "heat": 1, "fan": 2, "dry": 3, "auto": 4}
                 hvac_num = hvac_map.get(hvac_mode.lower())
                 if hvac_num is not None:
                     hvac_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=102, level=hvac_num)
-                    log(f"📤 Dynalite HVAC Mode Hex → {hvac_hex}")
-                    mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": hvac_hex})
+                    log(f"📤 Sending Dynalite Packet [Mode] → {hvac_hex}")
+                    _pub2dynet(type="dynet2",hex_string=hvac_hex)                    
+                    #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": hvac_hex})
                 else:
                     log(f"⚠️ Unknown HVAC mode: {hvac_mode}")
             except Exception as e:
                 log(f"❌ Failed to publish HVAC mode: {e}")
 
         if new_state["fan_mode"] != prev_state.get("fan_mode"):
-            log("📡 Fan Mode changed")
+            log(f"📡 Fan Mode changed from {prev_state.get("fan_mode")} -> {new_state["fan_mode"]}")            
             try:
                 fan_map = {"low": 0, "med": 1, "high": 2, "top": 3, "auto": 4}
                 fan_num = fan_map.get(fan_mode.lower())
                 if fan_num is not None:
                     fan_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=103, level=fan_num)
-                    log(f"📤 Dynalite Fan Mode Hex → {fan_hex}")
-                    mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": fan_hex})
+                    log(f"📤 Sending Dynalite Packet [Fan] → {fan_hex}")
+                    _pub2dynet(type="dynet2",hex_string=fan_hex)   
+                    #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": fan_hex})
                 else:
                     log(f"⚠️ Unknown Fan mode: {fan_mode}")
             except Exception as e:
                 log(f"❌ Failed to publish Fan mode: {e}")
 
         if new_state["status"] != prev_state.get("status"):
-            log("📡 Status changed")
+            log(f"📡 Status changed from {prev_state.get("status")} -> {new_state["status"]}")            
             try:
                 error_no = 0 if status.lower() == "ok" else 1
                 status_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=105, level=error_no)
-                log(f"📤 Dynalite Error Status Hex → {status_hex}")
-                mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": status_hex})
+                log(f"📤 Sending Dynalite Packet [Status] → {status_hex}")
+                #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": status_hex})
+                _pub2dynet(type="dynet2",hex_string=status_hex)               
             except Exception as e:
                 log(f"❌ Failed to publish error status: {e}")
 
@@ -160,7 +196,7 @@ def handle_climate_message(topic: str, state):
 
 def handle_dynalite_message(topic: str, dynalite):
     try:
-        log(f"🔄 Handling Dynalite message {dynalite.get("description", "")}")
+        log(f"🔄 Handling Dynalite message {dynalite.get('description', '')}")
         #do not process FE joins and/or where the device/box=bb 08
         #this avoids loop backs when issuing commands
         
@@ -268,6 +304,20 @@ def handle_dynalite_message(topic: str, dynalite):
 def handle_mqtt_command(topic, payload):
     try:
         #log(f"📥 Received on {topic}: {payload}")
+        #first check if bridges are online
+        if topic == MQTT_DYNALITE_WILL:
+            online = payload.lower() == "online"
+            bridge_online["dynalite"] = online
+        elif topic == MQTT_CLIMATE_WILL:
+            online = payload.lower() == "online"
+            bridge_online["climate"] = online
+
+        if not all(bridge_online.values()):
+            offline = [name for name, status in bridge_online.items() if not status]
+            log(f"⏳ Waiting for dependent bridge(s) to come online: {', '.join(offline)}")
+            return
+        
+
 
         # Parse JSON
         try:
@@ -276,20 +326,52 @@ def handle_mqtt_command(topic, payload):
             log(f"❌ Invalid JSON: {e}")
             return
 
-        
-
         #if topic is on Climate prefix
         if topic.startswith(MQTT_CLIMATE_PREFIX):
             handle_climate_message(topic, parsed)
             return
-          #if topic is on Dynalite Bus
-        elif topic.startswith(MQTT_DYNALITE_PREFIX):
+        #if topic is on Dynalite Bus SET
+        elif topic == f"{MQTT_DYNALITE_PREFIX}/set":
             handle_dynalite_message(topic, parsed)
+            return
+        elif topic.startswith(f"{MQTT_DYNALITE_PREFIX}/set/res/"):
+            response_id = topic.split("/")[-1]
+            
+            try:
+                result = json.loads(payload)
+            except Exception as e:
+                log(f"❌ Invalid JSON in response for ID {response_id}: {e}")
+                return
+
+            entry = pending_responses.pop(response_id, None)
+            
+            if entry:
+                elapsed = (datetime.now(timezone.utc) - entry["sent_at"]).total_seconds()
+                comment = entry.get("comment", "-")
+                status = result.get("status", "Unknown")
+                if not status.lower() == "ok":
+                    log(f"❌❌❌ Response ID {response_id} acknowledged — Status: {status}, Time: {elapsed:.2f}s, Comment: {comment}")
+            else:
+                log(f"⚠️❌❌ Response ID {response_id} not found in pending_responses (maybe expired or duplicate)")
+            
             return
         
               
     except Exception as e:
         log(f"❌ Handler crashed: {e}")
+
+
+async def sweep_pending_responses(ttl=15):
+    while True:
+        now = datetime.now(timezone.utc)
+        expired = [rid for rid, meta in pending_responses.items()
+                   if (now - meta["sent_at"]).total_seconds() > ttl]
+        for rid in expired:
+            meta = pending_responses.pop(rid, None)
+            log(f"⚠️❌⚠️ Expired Response ID {rid} — Full data: {json.dumps(meta, default=str)}")
+            pending_responses.pop(rid, None)
+        await asyncio.sleep(ttl)
+
 
 # Async main
 async def main():
@@ -308,6 +390,8 @@ async def main():
     mqtt_client.on_message = handle_mqtt_command
     mqtt_client.on_connect = handle_mqtt_connect
 
+    asyncio.create_task(sweep_pending_responses())
+    
     try:
         while True:
             await asyncio.sleep(1)
