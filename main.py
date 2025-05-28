@@ -119,7 +119,7 @@ def handle_climate_message(topic: str, state):
         # Compare and publish only if changed
 
         if new_state["setpoint"] != prev_state.get("setpoint"):
-            log(f"📡 Setpoint changed from {prev_state.get("setpoint")} -> {new_state["setpoint"]}")
+            log(f"📡 Setpoint changed from {prev_state.get('setpoint')} -> {new_state['setpoint']}")
             try:
                 setpoint_hex = build_area_setpoint_body(area=area_code, join=OUT_JOIN, setpoint=setpoint)
                 log(f"📤 Sending Dynalite Packet [Set_Point] → {setpoint_hex}")
@@ -129,7 +129,7 @@ def handle_climate_message(topic: str, state):
                 log(f"❌ Failed to publish setpoint: {e}")
 
         if new_state["current_temp"] != prev_state.get("current_Temp"):
-            log(f"📡 Current Temp changed from {prev_state.get("current_temp")} -> {new_state["current_temp"]}")            
+            log(f"📡 Current Temp changed from {prev_state.get('current_temp')} -> {new_state['current_temp']}")            
             try:
                 temp_hex = build_area_temperature_body(area=area_code, join=OUT_JOIN, temp=current_temp)
                 log(f"📤 Sending Dynalite Packet [Cur_Temp] → {temp_hex}")
@@ -139,7 +139,7 @@ def handle_climate_message(topic: str, state):
                 log(f"❌ Failed to publish temperature: {e}")
 
         if new_state["hvac_mode"] != prev_state.get("hvac_mode"):
-            log(f"📡 HVAC Mode changed from {prev_state.get("hvac_mode")} -> {new_state["hvac_mode"]}")            
+            log(f"📡 HVAC Mode changed from {prev_state.get('hvac_mode')} -> {new_state['hvac_mode']}")            
             try:
                 on_off = 0 if hvac_mode.lower() == "off" else 1
                 onoff_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=101, level=on_off)
@@ -160,7 +160,7 @@ def handle_climate_message(topic: str, state):
                 log(f"❌ Failed to publish HVAC mode: {e}")
 
         if new_state["fan_mode"] != prev_state.get("fan_mode"):
-            log(f"📡 Fan Mode changed from {prev_state.get("fan_mode")} -> {new_state["fan_mode"]}")            
+            log(f"📡 Fan Mode changed from {prev_state.get('fan_mode')} -> {new_state['fan_mode']}")            
             try:
                 fan_map = {"low": 0, "med": 1, "high": 2, "top": 3, "auto": 4}
                 fan_num = fan_map.get(fan_mode.lower())
@@ -175,7 +175,7 @@ def handle_climate_message(topic: str, state):
                 log(f"❌ Failed to publish Fan mode: {e}")
 
         if new_state["status"] != prev_state.get("status"):
-            log(f"📡 Status changed from {prev_state.get("status")} -> {new_state["status"]}")            
+            log(f"📡 Status changed from {prev_state.get('status')} -> {new_state['status']}")            
             try:
                 error_no = 0 if status.lower() == "ok" else 1
                 status_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=105, level=error_no)
