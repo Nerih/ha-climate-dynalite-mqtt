@@ -69,8 +69,6 @@ Running in Docker
 Here's a minimal Dockerfile:
 
 dockerfile
-Copy
-Edit
 FROM python:3.11-slim
 WORKDIR /app
 COPY . .
@@ -79,8 +77,6 @@ CMD ["python", "main.py"]
 To build and run:
 
 bash
-Copy
-Edit
 docker build -t climate-dynalite-bridge .
 docker run -e MQTT_HOST=192.168.1.100 ... climate-dynalite-bridge
 Health & Logging
@@ -92,8 +88,6 @@ Development
 The core entrypoint is:
 
 python
-Copy
-Edit
 if __name__ == "__main__":
     asyncio.run(main())
 Use main.py to launch the service either inside Docker or locally.
