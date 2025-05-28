@@ -4,7 +4,7 @@ from datetime import datetime
 from config import (
     MQTT_HOST, MQTT_PORT, MQTT_USERNAME, MQTT_PASSWORD,
     MQTT_CLIMATE_STATE, MQTT_DYNALITE_PREFIX, MQTT_BRIDGE_WILL,
-    OUT_JOIN, IN_JOIN, TEMP_PRECISION
+    OUT_JOIN, IN_JOIN, TEMP_PRECISION, MQTT_CLIMATE_PREFIX, MQTT_DEBUG
 )
 from helpers.dynet_mqtt import (
     build_area_temperature_body, build_area_preset_body,
@@ -26,24 +26,18 @@ def handle_mqtt_connect(client, userdata, flags, rc):
         try:
             client.subscribe(MQTT_CLIMATE_STATE)
             log(f"📡 Subscribed to {MQTT_CLIMATE_STATE}")
+            client.subscribe(MQTT_DYNALITE_PREFIX)
+            log(f"📡 Subscribed to {MQTT_DYNALITE_PREFIX}")
         except Exception as e:
             log(f"❌ Failed to subscribe: {e}")
     else:
         log(f"❌ Connection failed with code {rc}")
 
-# MQTT Message handler
-def handle_mqtt_command(topic, payload):
+
+def handle_climate_message(topic: str, state):
     try:
-        log(f"📥 Received on {topic}: {payload}")
+        log(f"🔄 Handling Climate message")
 
-        # Parse JSON
-        try:
-            state = json.loads(payload)
-        except Exception as e:
-            log(f"❌ Invalid JSON: {e}")
-            return
-
-        # Extract area from topic
         try:
             device_id = topic.split("/")[-2]
             area_code = int(device_id.split("_")[-1])
@@ -86,6 +80,11 @@ def handle_mqtt_command(topic, payload):
             "status": status
         }
         prev_state = last_state.get(area_code, {})
+
+        if new_state == prev_state:
+            log("✅ No change in climate state — skipping publish")
+            return
+
 
         # Compare and publish only if changed
 
@@ -155,6 +154,141 @@ def handle_mqtt_command(topic, payload):
         last_state[area_code] = new_state
 
     except Exception as e:
+        log(f"❌ Failed handling Climate message: {e}")
+
+
+
+def handle_dynalite_message(topic: str, dynalite):
+    try:
+        log(f"🔄 Handling Dynalite message {dynalite.get("description", "")}")
+        #do not process FE joins and/or where the device/box=bb 08
+        #this avoids loop backs when issuing commands
+        
+        description = str(dynalite.get("description", "").lower())
+        template = dynalite.get("template", "")
+        type = dynalite.get("type")
+        fields = dynalite.get("fields")
+  
+        if "join fe" in description:
+            log(f"⛔ Skipping due to Join FE → {description}")
+            return
+
+        if "set temperature set point to" in description:
+            if type =="dynet1":
+                #got dynet 1, we know field format is Area, Join, Setpoint
+                if not len(fields) == 3:
+                    log(f"⛔ Field length for Dynet1 Setpoint is more than 3 → {dynalite}")
+                    return   
+                area = fields[0]
+                join = fields[1]
+                setpoint = fields[2]
+            elif type =="dynet2":
+                if not len(fields) == 5:
+                    log(f"⛔ Field length for Dynet2 Setpoint is more than 5 → {dynalite}")
+                    return
+                #got dynet 2, we know field format is more complicated :)
+                area = fields[2]
+                join = fields[3]
+                setpoint = fields[4]
+            if area not in last_state:
+                log(f"⚠️ Area {area} not in cache (not a command for climate related area) — skipping publish")
+                return
+            topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/temperature"
+            mqtt_client.publish(topic_out, setpoint)
+            log(f"✅ Setpoint {setpoint} -> {area} ")
+            return
+
+        #handle all other commands    
+        elif "recall level" in description:
+            if type == "dynet1":
+                if not len(fields) == 5:
+                    log(f"⛔ Field length for Dynet1 Recall Level must be 4 → {dynalite}")
+                    return
+                #field len is 5
+                area = fields[0]
+                join = fields[1]
+                channel = fields[2]
+                level = int(fields[3].strip('%'))
+            elif type == "dynet2":
+                if not len(fields) == 7:
+                    log(f"⛔ Field length for Dynet2 Recall Level must be 6 → {dynalite} FIELD{len(fields)}")
+                    return
+                #field len is 7
+                area = fields[2]
+                join = fields[3]
+                channel = fields[4]
+                level = int(fields[5].strip('%'))
+            else:   
+                log(f"⛔ Unknown type → {dynalite}")
+                return
+            
+            if area not in last_state:
+                log(f"⚠️ Area {area} not in cache (not a command for climate related area) — skipping publish")
+                return
+            
+            if channel not in [101, 102, 103]:
+                log(f"⚠️ Channel {channel} is not HVAC command (101,102,103) — skipping")
+                return
+            
+            log(f"recall level for area{area} channel{channel} level{level} join{join}")
+
+            #update on/off
+            if channel == 101:
+                mode = "off" if level == 0 else "auto"
+                topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/mode"
+                mqtt_client.publish(topic_out, mode)
+                log(f"✅ HVAC mode {mode} -> {area} ")
+                return
+            #update mode
+            elif channel == 102:
+                hvac_modes = ["cool", "heat", "fan", "dry", "auto"]
+                if 0 <= level < len(hvac_modes):
+                    mode = hvac_modes[level]
+                    topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/mode"
+                    mqtt_client.publish(topic_out, mode)
+                    log(f"✅ HVAC mode {mode} -> {area} ")
+                return
+            #update fan
+            elif channel ==103:
+                fan_modes = ["low", "med", "high", "top", "auto"]
+                if 0 <= level < len(fan_modes):
+                    mode = fan_modes[level]
+                    topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/fan_mode"
+                    mqtt_client.publish(topic_out, mode)
+                    log(f"✅ Fan mode {mode} -> {area} ")
+                return
+
+
+        log("✅ Skipped Dynalite Message")
+    except Exception as e:
+        log(f"❌ Failed handling Dynalite message: {e}")
+
+
+# MQTT Message handler
+def handle_mqtt_command(topic, payload):
+    try:
+        #log(f"📥 Received on {topic}: {payload}")
+
+        # Parse JSON
+        try:
+            parsed = json.loads(payload)
+        except Exception as e:
+            log(f"❌ Invalid JSON: {e}")
+            return
+
+        
+
+        #if topic is on Climate prefix
+        if topic.startswith(MQTT_CLIMATE_PREFIX):
+            handle_climate_message(topic, parsed)
+            return
+          #if topic is on Dynalite Bus
+        elif topic.startswith(MQTT_DYNALITE_PREFIX):
+            handle_dynalite_message(topic, parsed)
+            return
+        
+              
+    except Exception as e:
         log(f"❌ Handler crashed: {e}")
 
 # Async main
@@ -167,7 +301,8 @@ async def main():
         mqtt_password=MQTT_PASSWORD,
         mqtt_host=MQTT_HOST,
         mqtt_port=MQTT_PORT,
-        will_topic=f"{MQTT_BRIDGE_WILL}/status"
+        will_topic=f"{MQTT_BRIDGE_WILL}/status",
+        mqtt_debug=MQTT_DEBUG
     )
 
     mqtt_client.on_message = handle_mqtt_command

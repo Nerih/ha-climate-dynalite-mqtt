@@ -2,7 +2,6 @@ import paho.mqtt.client as mqtt
 import json
 from datetime import datetime
 from typing import Callable, Optional
-
 class MQTTPublisher:
     
 
@@ -19,6 +18,7 @@ class MQTTPublisher:
         will_payload="offline",
         will_qos=0,
         will_retain=True,
+        mqtt_debug=False,
         on_connect=None,
         on_disconnect=None,
         on_message=None,
@@ -57,8 +57,11 @@ class MQTTPublisher:
         self.will_retain = will_retain
 
         #logging
-        self.logger = logger or (lambda msg: print(f"{datetime.now().strftime('%H:%M:%S')} 📡🧾 MQTT Client:{msg}"))
-
+        self.logger = (
+            logger if mqtt_debug and logger
+            else (lambda msg: print(f"{datetime.now().strftime('%H:%M:%S')} 📡🧾 MQTT Client:{msg}")) if mqtt_debug
+            else (lambda msg: None)
+        )
 
         # Set Last Will and Testament (LWT)
         if will_topic:
@@ -140,7 +143,7 @@ class MQTTPublisher:
                 payload = json.dumps(payload)
             result = self.client.publish(topic, payload=payload, qos=qos, retain=retain)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                self.log(f"📤 Published to topic: {topic}")
+                self.log(f"📤 Published to topic: {topic} payload:{payload}")
                 return True
             else:
                 self.log(f" ❌  Failed to publish to {topic}, rc={result.rc}")
