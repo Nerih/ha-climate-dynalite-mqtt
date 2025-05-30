@@ -128,7 +128,7 @@ def handle_climate_message(topic: str, state):
             except Exception as e:
                 log(f"❌ Failed to publish setpoint: {e}")
 
-        if new_state["current_temp"] != prev_state.get("current_Temp"):
+        if new_state["current_temp"] != prev_state.get("current_temp"):
             log(f"📡 Current Temp changed from {prev_state.get('current_temp')} -> {new_state['current_temp']}")            
             try:
                 temp_hex = build_area_temperature_body(area=area_code, join=OUT_JOIN, temp=current_temp)
@@ -194,6 +194,29 @@ def handle_climate_message(topic: str, state):
 
 
 
+def force_climate_resend(area_code: int):
+    if area_code not in last_state:
+        log(f"⚠️ Area {area_code} not found in cache")
+        return
+    log(f"🔁 Forcing full climate resend for Area {area_code}")
+    cached = last_state[area_code].copy()
+    # Map internal cache → MQTT-style keys
+    mqtt_state = {
+        "temperature": cached["setpoint"],
+        "current_temperature": cached["current_temp"],
+        "hvac_mode": cached["hvac_mode"],
+        "fan_mode": cached["fan_mode"],
+        "status": cached["status"]
+    }
+    # Stale cache to force publishing
+    last_state[area_code] = {}
+    handle_climate_message(
+        f"homeassistant/climate/coolmaster_L1_{area_code}/state",
+        mqtt_state
+    )
+
+
+
 def handle_dynalite_message(topic: str, dynalite):
     try:
         log(f"🔄 Handling Dynalite message {dynalite.get('description', '')}")
@@ -209,6 +232,29 @@ def handle_dynalite_message(topic: str, dynalite):
             log(f"⛔ Skipping due to Join FE → {description}")
             return
 
+        #handle requests, which is usually a keypad requesting updated
+        #data from system, so stale the cache and resend out the area data
+        #for this hvac
+        #request user temperature set point = #dynet1
+        #request temperature set point = #dynet2
+        if "request user temperature set point" in description or "request temperature set point" in description:
+            if type =="dynet1":
+                if not len(fields) == 2:
+                    log(f"⛔ Field length for Dynet1 Setpoint [REQUEST] is more than 2 → {dynalite}")
+                    return   
+                area = fields[0]
+                join = fields[1]
+            elif type =="dynet2":
+                if not len(fields) == 4:
+                    log(f"⛔ Field length for Dynet2 Setpoint [REQUEST] is more than 4 → {dynalite}")
+                    return
+                area = fields[2]
+                join = fields[3]
+            #function calls handler and stales cache, it also checks area exists
+            force_climate_resend(area)
+            return
+        
+                
         if "set temperature set point to" in description:
             if type =="dynet1":
                 #got dynet 1, we know field format is Area, Join, Setpoint
@@ -349,7 +395,7 @@ def handle_mqtt_command(topic, payload):
                 elapsed = (datetime.now(timezone.utc) - entry["sent_at"]).total_seconds()
                 comment = entry.get("comment", "-")
                 status = result.get("status", "Unknown")
-                if not status.lower() == "ok":
+                if str(status).lower() != "ok":
                     log(f"❌❌❌ Response ID {response_id} acknowledged — Status: {status}, Time: {elapsed:.2f}s, Comment: {comment}")
             else:
                 log(f"⚠️❌❌ Response ID {response_id} not found in pending_responses (maybe expired or duplicate)")
@@ -369,7 +415,7 @@ async def sweep_pending_responses(ttl=15):
         for rid in expired:
             meta = pending_responses.pop(rid, None)
             log(f"⚠️❌⚠️ Expired Response ID {rid} — Full data: {json.dumps(meta, default=str)}")
-            pending_responses.pop(rid, None)
+            #pending_responses.pop(rid, None)
         await asyncio.sleep(ttl)
 
 
