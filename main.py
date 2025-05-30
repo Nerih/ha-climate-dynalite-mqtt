@@ -331,7 +331,7 @@ def handle_mqtt_command(topic, payload):
             handle_climate_message(topic, parsed)
             return
         #if topic is on Dynalite Bus SET
-        elif topic == f"{MQTT_DYNALITE_PREFIX}/set":
+        elif topic == MQTT_DYNALITE_PREFIX:
             handle_dynalite_message(topic, parsed)
             return
         elif topic.startswith(f"{MQTT_DYNALITE_PREFIX}/set/res/"):
