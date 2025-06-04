@@ -320,6 +320,7 @@ def handle_dynalite_message(topic: str, dynalite):
                 topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/mode"
                 mqtt_client.publish(topic_out, mode)
                 log(f"✅ HVAC mode {mode} -> {area} ")
+                #TODO update cache
                 return
             #update mode
             elif channel == 102:
@@ -329,15 +330,19 @@ def handle_dynalite_message(topic: str, dynalite):
                     topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/mode"
                     mqtt_client.publish(topic_out, mode)
                     log(f"✅ HVAC mode {mode} -> {area} ")
+                    #TODO update cache
+                    last_state[int(area)]["hvac_mode"] = mode
                 return
             #update fan
             elif channel ==103:
-                fan_modes = ["low", "med", "high", "top", "auto"]
+                fan_modes = ["low", "medium", "high", "top", "auto"]
                 if 0 <= level < len(fan_modes):
                     mode = fan_modes[level]
                     topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/fan_mode"
                     mqtt_client.publish(topic_out, mode)
                     log(f"✅ Fan mode {mode} -> {area} ")
+                    #TODO update cache
+                    last_state[int(area)]["fan_mode"] = mode
                 return
 
 
