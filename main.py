@@ -147,7 +147,7 @@ def handle_climate_message(topic: str, state):
                 _pub2dynet(type="dynet2",hex_string=onoff_hex)
                 #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": onoff_hex})
 
-                hvac_map = {"cool": 0, "heat": 1, "fan": 2, "dry": 3, "auto": 4}
+                hvac_map = {"cool": 0, "heat": 1, "fan": 2, "dry": 3, "auto": 4, "off" :0} #add off as a map here same as Cool
                 hvac_num = hvac_map.get(hvac_mode.lower())
                 if hvac_num is not None:
                     hvac_hex = build_channel_level_body(area=area_code, join=OUT_JOIN, channel=102, level=hvac_num)
@@ -155,7 +155,7 @@ def handle_climate_message(topic: str, state):
                     _pub2dynet(type="dynet2",hex_string=hvac_hex)                    
                     #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": hvac_hex})
                 else:
-                    log(f"⚠️ Unknown HVAC mode: {hvac_mode}")
+                    log(f"❌ Unknown HVAC mode: {hvac_mode}")
             except Exception as e:
                 log(f"❌ Failed to publish HVAC mode: {e}")
 
@@ -170,7 +170,7 @@ def handle_climate_message(topic: str, state):
                     _pub2dynet(type="dynet2",hex_string=fan_hex)   
                     #mqtt_client.publish("dynalite/set", {"type": "dynet2", "hex_string": fan_hex})
                 else:
-                    log(f"⚠️ Unknown Fan mode: {fan_mode}")
+                    log(f"❌ Unknown Fan mode: {fan_mode}")
             except Exception as e:
                 log(f"❌ Failed to publish Fan mode: {e}")
 
