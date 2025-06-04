@@ -79,6 +79,7 @@ def handle_climate_message(topic: str, state):
         # Extract state
         try:
             setpoint     = state.get("temperature")
+            #TODO round to nearest 0.5 as dynalite only supports this.
             current_temp = round(state.get("current_temperature", 0), int(TEMP_PRECISION))
             hvac_mode    = state.get("hvac_mode")
             fan_mode     = state.get("fan_mode")
