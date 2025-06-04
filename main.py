@@ -278,6 +278,7 @@ def handle_dynalite_message(topic: str, dynalite):
             topic_out = f"homeassistant/climate/coolmaster_L1_{area}/set/temperature"
             mqtt_client.publish(topic_out, setpoint)
             log(f"✅ Setpoint {setpoint} -> {area} ")
+            last_state[int(area)]["setpoint"] = setpoint
             return
 
         #handle all other commands    
