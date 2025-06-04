@@ -48,7 +48,7 @@ def build_area_setpoint_body(area: int, join: int, setpoint: float, device=0xBB,
 
 def build_area_temperature_body(area: int, join: int, temp: float, device=0xBB, box=8) -> str:
     try:
-        opcode = 0x56
+        opcode = 0x57 #56 X -> 57 is reply, which seems to set
         area_hi, area_lo = (area >> 8) & 0xFF, area & 0xFF
         box_hi, box_lo = (box >> 8) & 0xFF, box & 0xFF
         temp_hi, temp_lo = float_to_dynet_decimal(temp)
