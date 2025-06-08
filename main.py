@@ -79,14 +79,7 @@ def handle_climate_message(topic: str, state):
         # Extract state
         try:
             setpoint     = state.get("temperature")
-            
-            raw_temp = float(state.get("current_temperature", 0))
-            if TEMP_PRECISION == 1:
-                current_temp = round(raw_temp * 2) / 2  # nearest 0.5
-            else:
-                current_temp = round(raw_temp, int(TEMP_PRECISION))
-
-            
+            current_temp = round(float(state.get("current_temperature", 0)) * 2) / 2  # nearest 0.5     
             hvac_mode    = state.get("hvac_mode")
             fan_mode     = state.get("fan_mode")
             status       = state.get("status")
